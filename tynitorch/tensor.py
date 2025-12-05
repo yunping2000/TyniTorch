@@ -1,27 +1,28 @@
-import torch
-from typing import Any, Optional
+from typing import Any, Optional, Sequence, Tuple
 from uuid import uuid4
 
-from .torch_helper import dtype_tyni_2_torch, dtype_torch_2_tyni
-from .storage import make_storage
+from .storage import infer_dtype, make_storage, read_flat, reshape_flat
 from .typing import Device, DType, _SHAPE
+
+
+def compute_default_strides(shape: Sequence[int]) -> Tuple[int, ...]:
+    """Compute contiguous row-major strides in units of elements."""
+    if not shape:
+        return ()
+    strides = [1] * len(shape)
+    for i in range(len(shape) - 2, -1, -1):
+        strides[i] = strides[i + 1] * shape[i + 1]
+    return tuple(strides)
 
 
 class Tensor:
     def __init__(self, data: Any, device: str = "cpu", dtype: Optional[DType] = None):
-        device_obj = Device.from_value(device)
-        torch_dtype = dtype_tyni_2_torch(dtype) if dtype is not None else None
-
-        try:
-            data_torch = torch.tensor(data, dtype=torch_dtype, device=str(device_obj))
-        except ValueError as e:
-            raise ValueError(f"Data provided cannot be converted to a torch tensor : {e}")
-
-        self.storage = make_storage(data_torch, device)
-        self.shape = tuple(data_torch.shape)
-        self.strides = None
+        self.storage, shape = make_storage(data, device, dtype)
+        self.shape = tuple(shape)
+        self.strides = compute_default_strides(self.shape)
+        self.offset = 0
         self.device = self.storage.device
-        self.dtype = dtype if dtype is not None else dtype_torch_2_tyni(data_torch)
+        self.dtype = self.storage.dtype
 
         self.uuid = uuid4()
 
@@ -39,4 +40,24 @@ class Tensor:
         return ops.add(self, other)
 
     def __repr__(self):
-        return f"Tensor(shape={self.shape}, device={self.device}, uuid={self.uuid})"
+        flat = read_flat(self.storage, self.shape, self.strides, self.offset)
+        nested = reshape_flat(flat, self.shape)
+        return _format_nested(nested)
+
+
+def _format_nested(value: Any, indent: int = 0) -> str:
+    """Pretty-format nested lists to resemble an ndarray literal."""
+    if not isinstance(value, list):
+        return str(value)
+
+    if not value:  # empty list
+        return "[]"
+
+    if not isinstance(value[0], list):  # 1D
+        return "[" + ", ".join(str(v) for v in value) + "]"
+
+    pad = "  " * indent
+    inner_pad = "  " * (indent + 1)
+    items = [_format_nested(v, indent + 1) for v in value]
+    joined = (",\n".join(inner_pad + item for item in items))
+    return "[\n" + joined + "\n" + pad + "]"
