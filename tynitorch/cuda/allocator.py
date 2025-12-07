@@ -8,6 +8,8 @@ class CudaError(RuntimeError):
 
 
 _CUDART: Optional[ctypes.CDLL] = None
+_CUDA_MEMCPY_HOST_TO_DEVICE = 1
+_CUDA_MEMCPY_DEVICE_TO_HOST = 2
 
 
 def _candidate_names() -> list[str]:
@@ -97,9 +99,6 @@ def cuda_free(ptr: int) -> None:
     _check_error(code, "cudaFree")
 
 
-_CUDA_MEMCPY_HOST_TO_DEVICE = 1
-
-
 def cuda_memcpy(dst_ptr: int, src_ptr: int, num_bytes: int, kind: int) -> None:
     """Copy memory using cudaMemcpy."""
     cudart = load_cudart()
@@ -114,3 +113,7 @@ def cuda_memcpy(dst_ptr: int, src_ptr: int, num_bytes: int, kind: int) -> None:
 
 def cuda_memcpy_host_to_device(dst_ptr: int, src_ptr: int, num_bytes: int) -> None:
     cuda_memcpy(dst_ptr, src_ptr, num_bytes, _CUDA_MEMCPY_HOST_TO_DEVICE)
+
+
+def cuda_memcpy_device_to_host(dst_ptr: int, src_ptr: int, num_bytes: int) -> None:
+    cuda_memcpy(dst_ptr, src_ptr, num_bytes, _CUDA_MEMCPY_DEVICE_TO_HOST)

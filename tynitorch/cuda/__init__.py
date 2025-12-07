@@ -4,6 +4,7 @@ from .allocator import (
     cuda_free,
     cuda_memcpy,
     cuda_memcpy_host_to_device,
+    cuda_memcpy_device_to_host,
     is_available,
     load_cudart,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "cuda_free",
     "cuda_memcpy",
     "cuda_memcpy_host_to_device",
+    "cuda_memcpy_device_to_host",
     "is_available",
     "load_cudart",
 ]

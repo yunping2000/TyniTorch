@@ -13,10 +13,8 @@ def test_tensor_create_cpu():
 
 
 def test_tensor_create_cuda():
-    try:
-        tensor = Tensor([[1.0]], device="cuda", dtype=DType.FLOAT32)
-    except NotImplementedError:
-        pytest.skip("CUDA runtime is not available")
+    tensor = Tensor([[1, 2], [3, 4]], device="cuda", dtype=DType.FLOAT32)
     assert tensor.device.type == DeviceType.CUDA
     assert tensor.dtype == DType.FLOAT32
-    assert tensor.shape == (1, 1)
+    assert tensor.shape == (2, 2)
+    assert str(tensor) == "[\n  [1.0, 2.0],\n  [3.0, 4.0]\n]"

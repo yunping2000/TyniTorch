@@ -187,16 +187,28 @@ def _iter_indices(shape: Sequence[int]) -> Iterable[Tuple[int, ...]]:
 
 
 def read_flat(storage: Storage, shape: Sequence[int], strides: Sequence[int], offset: int) -> List[Any]:
-    if storage.device.type != DeviceType.CPU:
-        raise NotImplementedError("Reading non-CPU storage is not supported yet.")
-    if storage.cpu_buffer is None:
-        raise ValueError("CPU storage is missing its backing buffer.")
+    if storage.device.type == DeviceType.CPU:
+        if storage.cpu_buffer is None:
+            raise ValueError("CPU storage is missing its backing buffer.")
+        buffer = storage.cpu_buffer
+    elif storage.device.type == DeviceType.CUDA:
+        try:
+            from .cuda import allocator
+        except ImportError as exc:
+            raise NotImplementedError("CUDA runtime is not available.") from exc
+        host_buffer = bytearray(storage.bytes)
+        if storage.bytes:
+            host_ptr = _buffer_pointer(host_buffer)
+            allocator.cuda_memcpy_device_to_host(host_ptr, storage.data_ptr, storage.bytes)
+        buffer = host_buffer
+    else:
+        raise NotImplementedError("Reading storage on this device is not supported.")
 
     flat: List[Any] = []
     elem_size = DTYPE_SIZES[storage.dtype]
     fmt = _STRUCT_FORMATS[storage.dtype]
     for idx in _iter_indices(shape):
         byte_offset = _element_byte_offset(strides, idx, offset, elem_size)
-        (value,) = struct.unpack_from(fmt, storage.cpu_buffer, byte_offset)
+        (value,) = struct.unpack_from(fmt, buffer, byte_offset)
         flat.append(value)
     return flat
