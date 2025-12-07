@@ -1,8 +1,10 @@
 from typing import Any, Optional, Sequence, Tuple
 from uuid import uuid4
 
-from .storage import infer_dtype, make_storage, read_flat, reshape_flat
-from .typing import Device, DType, _SHAPE
+import ctypes
+
+from .storage import Storage, infer_dtype, make_storage, read_flat, reshape_flat
+from .typing import Device, DeviceType, DType, DTYPE_SIZES, _SHAPE
 
 
 def compute_default_strides(shape: Sequence[int]) -> Tuple[int, ...]:
@@ -27,6 +29,52 @@ class Tensor:
         self.uuid = uuid4()
 
         self.grad = None
+
+    @classmethod
+    def from_pointer(
+        cls,
+        data_ptr: int,
+        shape: Sequence[int],
+        dtype: DType,
+        device: str = "cpu",
+        offset: int = 0,
+    ) -> "Tensor":
+        """Create a Tensor that wraps existing memory given by a raw pointer."""
+        device_obj = Device.from_value(device)
+        shape_tuple = tuple(shape)
+        strides = compute_default_strides(shape_tuple)
+        strides_tuple = tuple(strides)
+
+        elem_size = DTYPE_SIZES[dtype]
+        max_elem_index = offset
+        for dim, stride in zip(shape_tuple, strides_tuple):
+            if dim == 0:
+                continue
+            max_elem_index += (dim - 1) * stride
+        num_bytes = (max_elem_index + 1) * elem_size
+
+        cpu_buffer = None
+        if device_obj.type == DeviceType.CPU:
+            cpu_buffer = (ctypes.c_char * num_bytes).from_address(data_ptr) if num_bytes else bytearray()
+
+        storage = Storage(
+            data_ptr=data_ptr,
+            bytes=num_bytes,
+            dtype=dtype,
+            device=device_obj,
+            cpu_buffer=cpu_buffer, # type: ignore
+        )
+
+        tensor = cls.__new__(cls)
+        tensor.storage = storage
+        tensor.shape = shape_tuple
+        tensor.strides = strides_tuple
+        tensor.offset = offset
+        tensor.device = storage.device
+        tensor.dtype = storage.dtype
+        tensor.uuid = uuid4()
+        tensor.grad = None
+        return tensor
 
     def transpose(self, dim0: int, dim1: int) -> "Tensor":
         pass

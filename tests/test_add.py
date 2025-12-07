@@ -1,8 +1,7 @@
 # tests/test_add.py
 
 from tynitorch import Tensor
-from tynitorch import DType
-
+from tynitorch import DType, DeviceType
 
 def test_add_cpu():
     a = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
@@ -13,8 +12,9 @@ def test_add_cpu():
 
 
 def test_add_cuda():
-    # Placeholder until CUDA backend is implemented
-    try:
-        Tensor([[1.0]], device="cuda", dtype=DType.FLOAT32)
-    except NotImplementedError:
-        return
+    a = Tensor([[1.0]], device="cuda", dtype=DType.FLOAT32)
+    b = Tensor([[1.0]], device="cuda", dtype=DType.FLOAT32)
+    c = a + b
+    assert c.device.type == DeviceType.CUDA
+    assert c.shape == (1, 1)
+    assert str(c) == "[\n  [2.0]\n]"
