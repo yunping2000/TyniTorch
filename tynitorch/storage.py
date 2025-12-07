@@ -1,8 +1,9 @@
+import ctypes
 import struct
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
-from .typing import Device, DType, DTYPE_SIZES
+from .typing import Device, DeviceType, DType, DTYPE_SIZES
 
 # struct format strings for packing/unpacking raw bytes
 _STRUCT_FORMATS = {
@@ -15,10 +16,12 @@ _STRUCT_FORMATS = {
 
 @dataclass
 class Storage:
-    data: bytearray
+    # Raw pointer to the allocated memory. For CPU this points into `cpu_buffer`.
+    data_ptr: int
     bytes: int
     dtype: DType
     device: Device
+    cpu_buffer: Optional[bytearray] = None
 
 
 def _infer_shape(data: Any) -> Tuple[int, ...]:
@@ -96,19 +99,70 @@ def reshape_flat(flat: Sequence[Any], shape: Sequence[int]) -> Any:
     return nested
 
 
-def make_storage(data: Any, device: str, dtype: Optional[DType] = None) -> Tuple[Storage, Tuple[int, ...]]:
-    if dtype is None:
-        dtype = infer_dtype(data)
-    
-    shape = infer_shape(data)
-    flat = flatten_data(data)
-    fmt = _STRUCT_FORMATS[dtype]
-    elem_size = DTYPE_SIZES[dtype]
+def _buffer_pointer(buffer: bytearray) -> int:
+    """Return a raw pointer (int) to the start of the buffer."""
+    if len(buffer) == 0:
+        return 0
+    c_buf = (ctypes.c_char * len(buffer)).from_buffer(buffer)
+    return ctypes.addressof(c_buf)
+
+
+def _pack_flat_to_cpu_buffer(flat: Sequence[Any], fmt: str, elem_size: int) -> bytearray:
     buffer = bytearray(len(flat) * elem_size)
     for i, value in enumerate(flat):
         struct.pack_into(fmt, buffer, i * elem_size, value)
+    return buffer
+
+
+def _create_cpu_storage(flat: Sequence[Any], dtype: DType, elem_size: int, device: Device) -> Storage:
+    fmt = _STRUCT_FORMATS[dtype]
+    buffer = _pack_flat_to_cpu_buffer(flat, fmt, elem_size)
+    data_ptr = _buffer_pointer(buffer)
+    return Storage(data_ptr=data_ptr, bytes=len(buffer), dtype=dtype, device=device, cpu_buffer=buffer)
+
+
+def _create_cuda_storage(flat: Sequence[Any], dtype: DType, elem_size: int, device: Device) -> Storage:
+    try:
+        from .cuda import allocator
+    except ImportError as exc:
+        raise NotImplementedError("CUDA runtime is not available.") from exc
+
+    if not allocator.is_available():
+        raise NotImplementedError("CUDA runtime could not be loaded.")
+
+    num_bytes = len(flat) * elem_size
+    data_ptr = allocator.cuda_malloc(num_bytes)
+    if num_bytes:
+        fmt = _STRUCT_FORMATS[dtype]
+        host_buffer = _pack_flat_to_cpu_buffer(flat, fmt, elem_size)
+        host_ptr = _buffer_pointer(host_buffer)
+        allocator.cuda_memcpy_host_to_device(data_ptr, host_ptr, num_bytes)
+
+    return Storage(
+        data_ptr=data_ptr,
+        bytes=num_bytes,
+        dtype=dtype,
+        device=device,
+        cpu_buffer=None,
+    )
+
+
+def make_storage(data: Any, device: str, dtype: Optional[DType] = None) -> Tuple[Storage, Tuple[int, ...]]:
+    if dtype is None:
+        dtype = infer_dtype(data)
+
+    shape = infer_shape(data)
+    flat = flatten_data(data)
     device_obj = Device.from_value(device)
-    storage = Storage(data=buffer, bytes=len(buffer), dtype=dtype, device=device_obj)
+    elem_size = DTYPE_SIZES[dtype]
+
+    if device_obj.type == DeviceType.CPU:
+        storage = _create_cpu_storage(flat, dtype, elem_size, device_obj)
+    elif device_obj.type == DeviceType.CUDA:
+        storage = _create_cuda_storage(flat, dtype, elem_size, device_obj)
+    else:
+        raise ValueError(f"Unsupported device type: {device_obj.type}")
+
     return storage, shape
 
 
@@ -133,11 +187,16 @@ def _iter_indices(shape: Sequence[int]) -> Iterable[Tuple[int, ...]]:
 
 
 def read_flat(storage: Storage, shape: Sequence[int], strides: Sequence[int], offset: int) -> List[Any]:
+    if storage.device.type != DeviceType.CPU:
+        raise NotImplementedError("Reading non-CPU storage is not supported yet.")
+    if storage.cpu_buffer is None:
+        raise ValueError("CPU storage is missing its backing buffer.")
+
     flat: List[Any] = []
     elem_size = DTYPE_SIZES[storage.dtype]
     fmt = _STRUCT_FORMATS[storage.dtype]
     for idx in _iter_indices(shape):
         byte_offset = _element_byte_offset(strides, idx, offset, elem_size)
-        (value,) = struct.unpack_from(fmt, storage.data, byte_offset)
+        (value,) = struct.unpack_from(fmt, storage.cpu_buffer, byte_offset)
         flat.append(value)
     return flat
