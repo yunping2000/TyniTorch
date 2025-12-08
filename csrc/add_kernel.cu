@@ -10,8 +10,8 @@ __global__ void add_kernel(const T* __restrict__ a,
                            const T* __restrict__ b,
                            T* __restrict__ out,
                            std::size_t n) {
-    std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    std::size_t stride = blockDim.x * gridDim.x;
+    std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x; // global thread index
+    std::size_t stride = blockDim.x * gridDim.x; // total number of threads
     for (std::size_t i = idx; i < n; i += stride) {
         out[i] = a[i] + b[i];
     }
@@ -25,10 +25,10 @@ static void launch_add(const T* a,
                        int device_index) {
     cudaSetDevice(device_index);
 
-    int block = 256;
-    int grid = (n + block - 1) / block;
+    int block_size = 256;
+    int grid_size = (n + block_size - 1) / block_size; // grid_size = num_blocks
 
-    add_kernel<T><<<grid, block>>>(a, b, out, n);
+    add_kernel<T><<<grid_size, block_size>>>(a, b, out, n);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
