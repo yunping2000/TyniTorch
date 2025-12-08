@@ -4,6 +4,7 @@ An end-to-end tyni (tiny) neural network implementation with customized CUDA cor
 ## Environment Setup
 * nvcc version: 12.5
 * gcc version: 13.2.0
+* python version: 3.11.8
 * NO dependency on Torch.
 ```
 python3 -m venv venv
