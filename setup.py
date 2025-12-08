@@ -96,6 +96,11 @@ ext_modules = [
             "csrc/add_bindings.cpp",
         ],
         include_dirs=[pybind11.get_include()],
+        # Link against the CUDA runtime (cudart). We will try to determine
+        # the CUDA library directory from CUDA_HOME / CUDA_PATH or nvcc.
+        libraries=[],
+        library_dirs=[],
+        runtime_library_dirs=[],
         language="c++",
         extra_compile_args={
             "cxx": cxx_args,
@@ -103,6 +108,23 @@ ext_modules = [
         }, # type: ignore
     )
 ]
+
+# If a CUDA installation is present, add cudart to link flags so that symbols
+# like `cudaLaunchKernel` are resolved at runtime. We attempt to find CUDA
+# home either from environment or by locating `nvcc`.
+try:
+    nvcc_path = locate_nvcc()
+    inferred_cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH") or os.path.dirname(os.path.dirname(nvcc_path))
+    cuda_lib_dir = os.path.join(inferred_cuda_home, "lib64")
+    # Update the extension metadata in-place
+    for ext in ext_modules:
+        if ext.name == "tynitorch_cuda":
+            ext.libraries = ext.libraries + ["cudart"]
+            ext.library_dirs = list(ext.library_dirs) + [cuda_lib_dir]
+            ext.runtime_library_dirs = list(ext.runtime_library_dirs) + [cuda_lib_dir]
+except Exception:
+    # If we cannot find nvcc/CUDA, leave ext_modules as-is; build will fail later
+    pass
 
 setup(
     name="tynitorch",
