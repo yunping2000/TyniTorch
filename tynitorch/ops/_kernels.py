@@ -63,11 +63,10 @@ def add_gpu(t1: Tensor, t2: Tensor) -> Tensor:
     )
 
     # Return new Tensor wrapping the output storage
-    return Tensor.from_pointer(
-        data_ptr=out_storage.data_ptr,
+    return Tensor.from_storage(
+        storage=out_storage,
         shape=t1.shape,
-        dtype=t1.dtype,
-        device=device_str,
+        strides=t1.strides,
         offset=0,
     )
 

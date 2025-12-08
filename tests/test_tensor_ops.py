@@ -1,0 +1,277 @@
+# tests/test_tensor_ops.py
+
+import pytest
+from tynitorch import Tensor
+from tynitorch import DType
+
+
+class TestTranspose:
+    """Test cases for Tensor.transpose()"""
+
+    def test_transpose_2d_basic(self):
+        """Test basic 2D transpose."""
+        t = Tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        
+        assert t_t.shape == (3, 2)
+        assert t_t.is_contiguous() == False  # Transposed view is not contiguous
+        assert str(t_t) == "[\n  [1.0, 4.0],\n  [2.0, 5.0],\n  [3.0, 6.0]\n]"
+
+    def test_transpose_round_trip_2d(self):
+        """Test that transpose(a,b) then transpose(b,a) returns original layout."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        t_t_t = t_t.transpose(0, 1)
+        
+        assert t_t_t.shape == t.shape
+        assert str(t_t_t) == str(t)
+
+    def test_transpose_3d(self):
+        """Test transpose on 3D tensor."""
+        t = Tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]], device="cpu", dtype=DType.FLOAT32)
+        # Original shape: (2, 2, 2)
+        t_t = t.transpose(0, 2)
+        
+        assert t_t.shape == (2, 2, 2)
+
+    def test_transpose_same_dim(self):
+        """Test transposing same dimensions should be identity."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 0)
+        
+        assert t_t.shape == t.shape
+        assert str(t_t) == str(t)
+
+    def test_transpose_invalid_dim(self):
+        """Test transpose with out-of-bounds dimensions."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        
+        with pytest.raises(IndexError):
+            t.transpose(0, 2)
+        
+        with pytest.raises(IndexError):
+            t.transpose(-1, 0)
+
+    def test_transpose_shares_storage(self):
+        """Test that transpose creates a view sharing the same storage."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        
+        # Both should reference the same storage
+        assert t.storage is t_t.storage
+        assert t.storage.ref_count == 2  # One for original, one for transposed
+
+
+class TestView:
+    """Test cases for Tensor.view()"""
+
+    def test_view_flatten(self):
+        """Test flattening a 2D tensor to 1D."""
+        t = Tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="cpu", dtype=DType.FLOAT32)
+        t_flat = t.view((6,))
+        
+        assert t_flat.shape == (6,)
+        assert str(t_flat) == "[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]"
+
+    def test_view_reshape_2d(self):
+        """Test reshaping a 1D tensor to 2D."""
+        t = Tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], device="cpu", dtype=DType.FLOAT32)
+        t_2d = t.view((2, 3))
+        
+        assert t_2d.shape == (2, 3)
+        assert str(t_2d) == "[\n  [1.0, 2.0, 3.0],\n  [4.0, 5.0, 6.0]\n]"
+
+    def test_view_reshape_3d(self):
+        """Test reshaping to 3D."""
+        t = Tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], device="cpu", dtype=DType.FLOAT32)
+        t_3d = t.view((2, 2, 2))
+        
+        assert t_3d.shape == (2, 2, 2)
+
+    def test_view_round_trip(self):
+        """Test view(a) then view(b) returns original if b matches original shape."""
+        t = Tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="cpu", dtype=DType.FLOAT32)
+        t_flat = t.view((6,))
+        t_back = t_flat.view((2, 3))
+        
+        assert t_back.shape == t.shape
+        assert str(t_back) == str(t)
+
+    def test_view_element_count_mismatch(self):
+        """Test that view fails when element counts don't match."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        
+        with pytest.raises(ValueError, match="Cannot view tensor"):
+            t.view((3,))
+
+    def test_view_requires_contiguous(self):
+        """Test that view requires the tensor to be contiguous."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)  # Creates non-contiguous view
+        
+        with pytest.raises(ValueError, match="Can only view a contiguous tensor"):
+            t_t.view((4,))
+
+    def test_view_shares_storage(self):
+        """Test that view creates a view sharing the same storage."""
+        t = Tensor([1.0, 2.0, 3.0, 4.0], device="cpu", dtype=DType.FLOAT32)
+        t_2d = t.view((2, 2))
+        
+        # Both should reference the same storage
+        assert t.storage is t_2d.storage
+        assert t.storage.ref_count == 2
+
+    def test_view_with_single_dimension(self):
+        """Test view with single-element dimensions."""
+        t = Tensor([[[1.0, 2.0]]], device="cpu", dtype=DType.FLOAT32)
+        t_flat = t.view((2,))
+        
+        assert t_flat.shape == (2,)
+
+
+class TestContiguous:
+    """Test cases for Tensor.contiguous()"""
+
+    def test_contiguous_already_contiguous(self):
+        """Test that contiguous returns self if already contiguous."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_cont = t.contiguous()
+        
+        # Should return the same object
+        assert t_cont is t
+
+    def test_contiguous_non_contiguous_view(self):
+        """Test that contiguous copies data from non-contiguous view."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)  # Non-contiguous
+        t_cont = t_t.contiguous()
+        
+        # Should be a different object
+        assert t_cont is not t_t
+        assert t_cont.is_contiguous()
+        assert str(t_cont) == str(t_t)  # Data should be the same
+        # But storage should be different
+        assert t_cont.storage is not t.storage
+
+    def test_contiguous_preserves_data(self):
+        """Test that contiguous preserves all data values."""
+        t = Tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 2)  # Non-contiguous
+        t_cont = t_t.contiguous()
+        
+        assert str(t_cont) == str(t_t)
+
+    def test_contiguous_round_trip(self):
+        """Test that contiguous(contiguous(t)) == contiguous(t)."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        t_cont1 = t_t.contiguous()
+        t_cont2 = t_cont1.contiguous()
+        
+        # Second contiguous should return self
+        assert t_cont2 is t_cont1
+
+    def test_contiguous_after_transpose(self):
+        """Test making a transposed tensor contiguous."""
+        original = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+        t = Tensor(original, device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        
+        assert not t_t.is_contiguous()
+        
+        t_cont = t_t.contiguous()
+        assert t_cont.is_contiguous()
+        assert t_cont.shape == (3, 2)
+
+
+class TestIsContiguous:
+    """Test cases for Tensor.is_contiguous()"""
+
+    def test_is_contiguous_newly_created(self):
+        """Test that newly created tensors are contiguous."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        assert t.is_contiguous()
+
+    def test_is_contiguous_1d(self):
+        """Test 1D tensor is always contiguous."""
+        t = Tensor([1.0, 2.0, 3.0], device="cpu", dtype=DType.FLOAT32)
+        assert t.is_contiguous()
+
+    def test_is_contiguous_empty(self):
+        """Test empty tensor is contiguous."""
+        t = Tensor([], device="cpu", dtype=DType.FLOAT32)
+        assert t.is_contiguous()
+
+    def test_is_contiguous_scalar(self):
+        """Test scalar (0D) tensor is contiguous."""
+        t = Tensor(5.0, device="cpu", dtype=DType.FLOAT32)
+        assert t.is_contiguous()
+
+    def test_is_contiguous_after_transpose(self):
+        """Test that transposed tensor is not contiguous."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        
+        assert not t_t.is_contiguous()
+
+    def test_is_contiguous_after_contiguous(self):
+        """Test that contiguous() makes non-contiguous tensor contiguous."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        t_cont = t_t.contiguous()
+        
+        assert t_cont.is_contiguous()
+
+    def test_is_contiguous_3d(self):
+        """Test contiguity check on 3D tensor."""
+        t = Tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]], device="cpu", dtype=DType.FLOAT32)
+        assert t.is_contiguous()
+        
+        t_t = t.transpose(0, 2)
+        assert not t_t.is_contiguous()
+
+
+class TestIntegration:
+    """Integration tests combining multiple operations"""
+
+    def test_transpose_view_contiguous_chain(self):
+        """Test chaining transpose -> view (should fail) -> contiguous -> view (should work)."""
+        t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        t_t = t.transpose(0, 1)
+        
+        # View should fail on non-contiguous
+        with pytest.raises(ValueError):
+            t_t.view((4,))
+        
+        # After contiguous, view should work
+        t_cont = t_t.contiguous()
+        t_flat = t_cont.view((4,))
+        assert t_flat.shape == (4,)
+
+    def test_multiple_transposes(self):
+        """Test multiple sequential transposes."""
+        t = Tensor([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]], device="cpu", dtype=DType.FLOAT32)
+        
+        # (2, 2, 2) -> transpose(0,1) -> (2, 2, 2)
+        t = t.transpose(0, 1)
+        # (2, 2, 2) -> transpose(1,2) -> (2, 2, 2)
+        t = t.transpose(1, 2)
+        # (2, 2, 2) -> transpose(0,2) -> (2, 2, 2)
+        t = t.transpose(0, 2)
+        
+        assert t.shape == (2, 2, 2)
+
+    def test_storage_ref_count_with_operations(self):
+        """Test that ref_count is properly maintained through operations."""
+        t1 = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
+        assert t1.storage.ref_count == 1
+        
+        t2 = t1.transpose(0, 1)
+        assert t1.storage.ref_count == 2
+        
+        t3 = t1.view((4,))
+        assert t1.storage.ref_count == 3
+        
+        # Delete t2, ref_count should decrease
+        del t2
+        assert t1.storage.ref_count == 2

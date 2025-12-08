@@ -18,10 +18,25 @@ _STRUCT_FORMATS = {
 class Storage:
     # Raw pointer to the allocated memory. For CPU this points into `cpu_buffer`.
     data_ptr: int
-    bytes: int
+    num_bytes: int
     dtype: DType
     device: Device
     cpu_buffer: Optional[bytearray] = None
+    ref_count: int = 1
+
+    def free(self) -> None:
+        """Free Storage resources. CPU memory is auto-freed; CUDA memory must be explicitly freed."""
+        if self.device.type == DeviceType.CPU:
+            # CPU storage is automatically freed when cpu_buffer is garbage collected
+            return
+
+        # Free CUDA memory
+        try:
+            from .cuda import allocator
+            if self.data_ptr and self.num_bytes:
+                allocator.cuda_free(self.data_ptr)
+        except ImportError:
+            pass
 
 
 def _infer_shape(data: Any) -> Tuple[int, ...]:
@@ -118,7 +133,7 @@ def _create_cpu_storage(flat: Sequence[Any], dtype: DType, elem_size: int, devic
     fmt = _STRUCT_FORMATS[dtype]
     buffer = _pack_flat_to_cpu_buffer(flat, fmt, elem_size)
     data_ptr = _buffer_pointer(buffer)
-    return Storage(data_ptr=data_ptr, bytes=len(buffer), dtype=dtype, device=device, cpu_buffer=buffer)
+    return Storage(data_ptr=data_ptr, num_bytes=len(buffer), dtype=dtype, device=device, cpu_buffer=buffer)
 
 
 def _create_cuda_storage(flat: Sequence[Any], dtype: DType, elem_size: int, device: Device) -> Storage:
@@ -140,7 +155,7 @@ def _create_cuda_storage(flat: Sequence[Any], dtype: DType, elem_size: int, devi
 
     return Storage(
         data_ptr=data_ptr,
-        bytes=num_bytes,
+        num_bytes=num_bytes,
         dtype=dtype,
         device=device,
         cpu_buffer=None,
@@ -196,10 +211,10 @@ def read_flat(storage: Storage, shape: Sequence[int], strides: Sequence[int], of
             from .cuda import allocator
         except ImportError as exc:
             raise NotImplementedError("CUDA runtime is not available.") from exc
-        host_buffer = bytearray(storage.bytes)
-        if storage.bytes:
+        host_buffer = bytearray(storage.num_bytes)
+        if storage.num_bytes:
             host_ptr = _buffer_pointer(host_buffer)
-            allocator.cuda_memcpy_device_to_host(host_ptr, storage.data_ptr, storage.bytes)
+            allocator.cuda_memcpy_device_to_host(host_ptr, storage.data_ptr, storage.num_bytes)
         buffer = host_buffer
     else:
         raise NotImplementedError("Reading storage on this device is not supported.")
