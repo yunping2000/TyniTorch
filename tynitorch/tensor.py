@@ -3,8 +3,47 @@ from uuid import uuid4
 
 import ctypes
 
-from .storage import Storage, infer_dtype, make_storage, read_flat, reshape_flat
+from .storage import (
+    Storage,
+    flatten,
+    reshape_flat,
+)
 from .typing import Device, DeviceType, DType, DTYPE_SIZES, _SHAPE
+
+def infer_dtype(data: Any) -> DType:
+    has_float = False
+    def _walk(x: Any) -> None:
+        nonlocal has_float
+        if isinstance(x, (list, tuple)):
+            for item in x:
+                _walk(item)
+        elif isinstance(x, bool):
+            return
+        elif isinstance(x, float):
+            has_float = True
+        elif isinstance(x, int):
+            return
+        else:
+            raise TypeError(f"Unsupported data type: {type(x)}")
+    _walk(data)
+    return DType.FLOAT32 if has_float else DType.INT64
+
+
+def _infer_shape(data: Any) -> Tuple[int, ...]:
+    if isinstance(data, (list, tuple)):
+        if len(data) == 0:
+            return (0,)
+        child_shape = _infer_shape(data[0])
+        for item in data:
+            if _infer_shape(item) != child_shape:
+                raise ValueError("Inconsistent shapes in nested data")
+        return (len(data),) + child_shape
+    else:
+        return ()
+
+
+def infer_shape(data: Any) -> Tuple[int, ...]:
+    return _infer_shape(data)
 
 
 def compute_default_strides(shape: Sequence[int]) -> Tuple[int, ...]:
@@ -19,16 +58,20 @@ def compute_default_strides(shape: Sequence[int]) -> Tuple[int, ...]:
 
 class Tensor:
     def __init__(self, data: Any, device: str = "cpu", dtype: Optional[DType] = None):
-        self.storage, shape = make_storage(data, device, dtype)
-        # Storage already has ref_count=1 from creation, so no increment needed here
-        self.shape = tuple(shape)
+        self.shape = infer_shape(data) # May raise exception if data is malformed
+        
+        self.num_elements = 1
+        for dim in self.shape:
+            self.num_elements *= dim
+
+        self.dtype = dtype if dtype is not None else infer_dtype(data)
+        self.storage = Storage.allocate(self.num_elements, self.dtype, device)
+        self.storage.copy_from_list(data)
+
         self.strides = compute_default_strides(self.shape)
         self.offset = 0
         self.device = self.storage.device
-        self.dtype = self.storage.dtype
-
         self.uuid = uuid4()
-
         self.grad = None
 
 
@@ -117,10 +160,13 @@ class Tensor:
         if self.is_contiguous():
             return self
 
-        flat = read_flat(self.storage, self.shape, self.strides, self.offset)
-        nested = reshape_flat(flat, self.shape)
-        return Tensor(nested, device=str(self.device), dtype=self.dtype)
+        # For cpu buffers, we want to manipulate the cpu buffer directly
+        # We don't want to create temporary lists.
 
+        # For cuda tensors, we don't want gpu->host->gpu copying.
+        # We want to directly create a copy on gpu.
+
+        raise NotImplementedError("contiguous() is not yet implemented.")
 
     def is_contiguous(self) -> bool:
         expected_stride = 1
@@ -146,7 +192,7 @@ class Tensor:
 
 
     def __repr__(self):
-        flat = read_flat(self.storage, self.shape, self.strides, self.offset)
+        flat = self.storage.read_flat(self.shape, self.strides, self.offset)
         nested = reshape_flat(flat, self.shape)
         return _format_nested(nested)
 

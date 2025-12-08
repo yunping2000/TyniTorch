@@ -16,18 +16,19 @@ _STRUCT_FORMATS = {
 
 @dataclass
 class Storage:
-    # Raw pointer to the allocated memory. For CPU this points into `cpu_buffer`.
+    # Raw pointer to the allocated memory.
     data_ptr: int
     num_bytes: int
     dtype: DType
     device: Device
-    cpu_buffer: Optional[bytearray] = None
     ref_count: int = 1
+    # Keep a reference to the CPU-side buffer so it's not freed by GC.
+    _cpu_buffer: Optional[bytearray] = None
 
     def free(self) -> None:
         """Free Storage resources. CPU memory is auto-freed; CUDA memory must be explicitly freed."""
         if self.device.type == DeviceType.CPU:
-            # CPU storage is automatically freed when cpu_buffer is garbage collected
+            # CPU storage is automatically freed after GC
             return
 
         # Free CUDA memory
@@ -38,55 +39,120 @@ class Storage:
         except ImportError:
             pass
 
+    @classmethod
+    def allocate(cls, length: int, dtype: DType, device: str | Device) -> "Storage":
+        """Allocate a Storage object for given length/dtype/device."""
+        num_bytes = length * DTYPE_SIZES[dtype]
+        device_obj = Device.from_value(device)
+        host_buf: Optional[bytearray] = None
+        if device_obj.type == DeviceType.CPU:
+            # Allocate a host bytearray and keep a reference to it to avoid
+            # its memory being reclaimed by the GC (which would invalidate
+            # the raw pointer returned by _get_buffer_pointer).
+            host_buf = bytearray(num_bytes)
+            buffer = _get_buffer_pointer(host_buf)
+        elif device_obj.type == DeviceType.CUDA:
+            buffer = _allocate_buffer_cuda(num_bytes)
+        else:
+            raise ValueError(f"Unsupported device type: {device_obj.type}")
 
-def _infer_shape(data: Any) -> Tuple[int, ...]:
-    if isinstance(data, (list, tuple)):
-        if len(data) == 0:
-            return (0,)
-        child_shape = _infer_shape(data[0])
-        for item in data:
-            if _infer_shape(item) != child_shape:
-                raise ValueError("Inconsistent shapes in nested data")
-        return (len(data),) + child_shape
-    else:
-        return ()
+        storage = cls(
+            data_ptr=buffer,
+            num_bytes=num_bytes,
+            dtype=dtype,
+            device=device_obj,
+        )
+        if device_obj.type == DeviceType.CPU:
+            storage._cpu_buffer = host_buf
+        return storage
 
+    def copy_from_list(self, data: List[Any]) -> None:
+        """Copy a flat sequence of Python values into this storage."""
+        flat = flatten(data)
 
-def _flatten(data: Any, out: List[Any]) -> None:
-    if isinstance(data, (list, tuple)):
-        for item in data:
-            _flatten(item, out)
-    else:
-        out.append(data)
+        # Check if flat size <= storage capacity
+        elem_size = DTYPE_SIZES[self.dtype]
+        if len(flat) * elem_size > self.num_bytes:
+            raise ValueError("Flat data exceeds storage capacity")
 
+        if self.device.type == DeviceType.CPU:
+            fmt = _STRUCT_FORMATS[self.dtype]
+            elem_size = DTYPE_SIZES[self.dtype]
+            # If we have a retained CPU bytearray, write into it directly
+            if self._cpu_buffer is not None:
+                for i, value in enumerate(flat):
+                    struct.pack_into(
+                        fmt,
+                        self._cpu_buffer,
+                        i * elem_size,
+                        value,
+                    )
+            else:
+                # Fallback: write into raw address using ctypes.memmove
+                # TODO: Probably not needed
+                for i, value in enumerate(flat):
+                    offset_bytes = i * elem_size
+                    packed = struct.pack(fmt, value)
+                    ctypes.memmove(self.data_ptr + offset_bytes, packed, elem_size)
+        elif self.device.type == DeviceType.CUDA:
+            try:
+                from .cuda import allocator
+            except ImportError as exc:
+                raise NotImplementedError("CUDA runtime is not available.") from exc
 
-def infer_shape(data: Any) -> Tuple[int, ...]:
-    return _infer_shape(data)
+            host_buffer = bytearray(self.num_bytes)
+            for i, value in enumerate(flat):
+                struct.pack_into(
+                    _STRUCT_FORMATS[self.dtype],
+                    host_buffer,
+                    i * DTYPE_SIZES[self.dtype],
+                    value
+                )
+            if self.num_bytes:
+                host_ptr = _get_buffer_pointer(host_buffer)
+                allocator.cuda_memcpy_host_to_device(self.data_ptr, host_ptr, self.num_bytes)
+        else:
+            raise NotImplementedError("Copying to storage on this device is not supported.")
 
+    def read_flat(self, shape: Sequence[int], strides: Sequence[int], offset: int) -> List[Any]:
+        """Read values from storage into a flat Python list according to shape/strides/offset."""
+        if self.device.type == DeviceType.CPU:
+            buffer = bytearray(
+                (ctypes.c_char * self.num_bytes).from_address(self.data_ptr)
+            )
+        elif self.device.type == DeviceType.CUDA:
+            try:
+                from .cuda import allocator
+            except ImportError as exc:
+                raise NotImplementedError("CUDA runtime is not available.") from exc
+            host_buffer = bytearray(self.num_bytes)
+            if self.num_bytes:
+                host_ptr = _get_buffer_pointer(host_buffer)
+                allocator.cuda_memcpy_device_to_host(host_ptr, self.data_ptr, self.num_bytes)
+            buffer = host_buffer
+        else:
+            raise NotImplementedError("Reading storage on this device is not supported.")
 
-def flatten_data(data: Any) -> List[Any]:
+        flat: List[Any] = []
+        elem_size = DTYPE_SIZES[self.dtype]
+        fmt = _STRUCT_FORMATS[self.dtype]
+        for idx in _iter_indices(shape):
+            byte_offset = _element_byte_offset(strides, idx, offset, elem_size)
+            (value,) = struct.unpack_from(fmt, buffer, byte_offset)
+            flat.append(value)
+        return flat
+
+def flatten(nested: Any) -> List[Any]:
+    """Flatten nested lists/tuples into a flat list."""
     flat: List[Any] = []
-    _flatten(data, flat)
-    return flat
-
-
-def infer_dtype(data: Any) -> DType:
-    has_float = False
     def _walk(x: Any) -> None:
-        nonlocal has_float
         if isinstance(x, (list, tuple)):
             for item in x:
                 _walk(item)
-        elif isinstance(x, bool):
-            return
-        elif isinstance(x, float):
-            has_float = True
-        elif isinstance(x, int):
-            return
         else:
-            raise TypeError(f"Unsupported data type: {type(x)}")
-    _walk(data)
-    return DType.FLOAT32 if has_float else DType.INT64
+            flat.append(x)
+    _walk(nested)
+    return flat
 
 
 def reshape_flat(flat: Sequence[Any], shape: Sequence[int]) -> Any:
@@ -114,7 +180,7 @@ def reshape_flat(flat: Sequence[Any], shape: Sequence[int]) -> Any:
     return nested
 
 
-def _buffer_pointer(buffer: bytearray) -> int:
+def _get_buffer_pointer(buffer: bytearray) -> int:
     """Return a raw pointer (int) to the start of the buffer."""
     if len(buffer) == 0:
         return 0
@@ -122,63 +188,21 @@ def _buffer_pointer(buffer: bytearray) -> int:
     return ctypes.addressof(c_buf)
 
 
-def _pack_flat_to_cpu_buffer(flat: Sequence[Any], fmt: str, elem_size: int) -> bytearray:
-    buffer = bytearray(len(flat) * elem_size)
-    for i, value in enumerate(flat):
-        struct.pack_into(fmt, buffer, i * elem_size, value)
-    return buffer
+def _allocate_buffer_cpu(num_bytes: int) -> int: # Returns a raw pointer
+    return _get_buffer_pointer(bytearray(num_bytes))
 
 
-def _create_cpu_storage(flat: Sequence[Any], dtype: DType, elem_size: int, device: Device) -> Storage:
-    fmt = _STRUCT_FORMATS[dtype]
-    buffer = _pack_flat_to_cpu_buffer(flat, fmt, elem_size)
-    data_ptr = _buffer_pointer(buffer)
-    return Storage(data_ptr=data_ptr, num_bytes=len(buffer), dtype=dtype, device=device, cpu_buffer=buffer)
-
-
-def _create_cuda_storage(flat: Sequence[Any], dtype: DType, elem_size: int, device: Device) -> Storage:
+def _allocate_buffer_cuda(num_bytes: int) -> int: # Returns a raw pointer
     try:
         from .cuda import allocator
     except ImportError as exc:
         raise NotImplementedError("CUDA runtime is not available.") from exc
 
     if not allocator.is_available():
-        raise NotImplementedError("CUDA runtime could not be loaded.")
+        raise NotImplementedError("CUDA runtime could not be loaded.")    
 
-    num_bytes = len(flat) * elem_size
-    data_ptr = allocator.cuda_malloc(num_bytes)
-    if num_bytes:
-        fmt = _STRUCT_FORMATS[dtype]
-        host_buffer = _pack_flat_to_cpu_buffer(flat, fmt, elem_size)
-        host_ptr = _buffer_pointer(host_buffer)
-        allocator.cuda_memcpy_host_to_device(data_ptr, host_ptr, num_bytes)
+    return allocator.cuda_malloc(num_bytes)
 
-    return Storage(
-        data_ptr=data_ptr,
-        num_bytes=num_bytes,
-        dtype=dtype,
-        device=device,
-        cpu_buffer=None,
-    )
-
-
-def make_storage(data: Any, device: str, dtype: Optional[DType] = None) -> Tuple[Storage, Tuple[int, ...]]:
-    if dtype is None:
-        dtype = infer_dtype(data)
-
-    shape = infer_shape(data)
-    flat = flatten_data(data)
-    device_obj = Device.from_value(device)
-    elem_size = DTYPE_SIZES[dtype]
-
-    if device_obj.type == DeviceType.CPU:
-        storage = _create_cpu_storage(flat, dtype, elem_size, device_obj)
-    elif device_obj.type == DeviceType.CUDA:
-        storage = _create_cuda_storage(flat, dtype, elem_size, device_obj)
-    else:
-        raise ValueError(f"Unsupported device type: {device_obj.type}")
-
-    return storage, shape
 
 
 def _element_byte_offset(strides: Sequence[int], index: Sequence[int], offset: int, elem_size: int) -> int:
@@ -201,29 +225,6 @@ def _iter_indices(shape: Sequence[int]) -> Iterable[Tuple[int, ...]]:
     yield from _rec((), shape)
 
 
-def read_flat(storage: Storage, shape: Sequence[int], strides: Sequence[int], offset: int) -> List[Any]:
-    if storage.device.type == DeviceType.CPU:
-        if storage.cpu_buffer is None:
-            raise ValueError("CPU storage is missing its backing buffer.")
-        buffer = storage.cpu_buffer
-    elif storage.device.type == DeviceType.CUDA:
-        try:
-            from .cuda import allocator
-        except ImportError as exc:
-            raise NotImplementedError("CUDA runtime is not available.") from exc
-        host_buffer = bytearray(storage.num_bytes)
-        if storage.num_bytes:
-            host_ptr = _buffer_pointer(host_buffer)
-            allocator.cuda_memcpy_device_to_host(host_ptr, storage.data_ptr, storage.num_bytes)
-        buffer = host_buffer
-    else:
-        raise NotImplementedError("Reading storage on this device is not supported.")
-
-    flat: List[Any] = []
-    elem_size = DTYPE_SIZES[storage.dtype]
-    fmt = _STRUCT_FORMATS[storage.dtype]
-    for idx in _iter_indices(shape):
-        byte_offset = _element_byte_offset(strides, idx, offset, elem_size)
-        (value,) = struct.unpack_from(fmt, buffer, byte_offset)
-        flat.append(value)
-    return flat
+# Note: allocate_storage, copy_flat_to_storage, and read_flat are now
+# implemented as `Storage.allocate`, `Storage.copy_from_flat`, and
+# `Storage.read_flat` respectively.

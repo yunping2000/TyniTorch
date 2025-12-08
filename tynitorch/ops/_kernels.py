@@ -1,4 +1,4 @@
-from ..storage import read_flat, reshape_flat, make_storage
+from ..storage import reshape_flat, Storage
 from ..tensor import Tensor
 from ..dispatcher import register_kernel
 from ..typing import DType
@@ -17,8 +17,8 @@ def _compute_strides(shape):
 def add_cpu(t1: Tensor, t2: Tensor) -> Tensor:
     if t1.shape != t2.shape:
         raise ValueError(f"Shape mismatch: {t1.shape} vs {t2.shape}")
-    flat1 = read_flat(t1.storage, t1.shape, t1.strides, t1.offset)
-    flat2 = read_flat(t2.storage, t2.shape, t2.strides, t2.offset)
+    flat1 = t1.storage.read_flat(t1.shape, t1.strides, t1.offset)
+    flat2 = t2.storage.read_flat(t2.shape, t2.strides, t2.offset)
     flat_sum = [a + b for a, b in zip(flat1, flat2)]
     nested = reshape_flat(flat_sum, t1.shape)
     return Tensor(
@@ -51,9 +51,8 @@ def add_gpu(t1: Tensor, t2: Tensor) -> Tensor:
 
     # Call CUDA kernel
     # Create output storage on GPU
-    device_str = str(t1.device)
-    out_storage, _ = make_storage([0.0] * total_elements, device_str, t1.dtype)
-    
+    out_storage = Storage.allocate(total_elements, t1.dtype, t1.device)
+
     tynitorch_cuda.add_f32(
         t1.storage.data_ptr,
         t2.storage.data_ptr,
