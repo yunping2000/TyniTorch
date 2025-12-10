@@ -6,9 +6,6 @@ import sys
 import subprocess
 import pybind11
 
-from setuptools.command.build_ext import build_ext
-import os
-
 def find_in_path(executable, path=None):
     if path is None:
         path = os.environ.get("PATH", "")
@@ -25,17 +22,19 @@ def locate_nvcc():
         if os.path.isfile(nvcc) and os.access(nvcc, os.X_OK):
             return nvcc
     nvcc = find_in_path("nvcc")
-    if nvcc is None:
-        raise RuntimeError("Could not find 'nvcc'. Set CUDA_HOME or add nvcc to PATH.")
     return nvcc
 
 
 class BuildExtensionWithCUDA(build_ext):
     def build_extensions(self):
+        if not CUDA_AVAILABLE:
+            return super().build_extensions()
         self._customize_compiler_for_nvcc()
         super().build_extensions()
 
     def _customize_compiler_for_nvcc(self):
+        if NVCC_PATH is None:
+            raise RuntimeError("CUDA build requested but nvcc was not found.")
         compiler = self.compiler
 
         # allow .cu sources
@@ -43,7 +42,7 @@ class BuildExtensionWithCUDA(build_ext):
             compiler.src_extensions.append(".cu")
 
         default_compiler_so = compiler.compiler_so[:] if isinstance(compiler.compiler_so, list) else compiler.compiler_so
-        nvcc = locate_nvcc()
+        nvcc = NVCC_PATH
 
         super_compile = compiler._compile
 
@@ -76,6 +75,9 @@ class BuildExtensionWithCUDA(build_ext):
         compiler._compile = _compile
 
 
+NVCC_PATH = locate_nvcc()
+CUDA_AVAILABLE = NVCC_PATH is not None
+
 # Common compile flags
 cxx_args = ["-O3", "-std=c++17"]
 
@@ -88,8 +90,10 @@ nvcc_args = [
     "--compiler-options", "-fPIC",
 ]
 
-ext_modules = [
-    Extension(
+ext_modules = []
+
+if CUDA_AVAILABLE:
+    cuda_extension = Extension(
         name="tynitorch_cuda",
         sources=[
             "csrc/add_kernel.cu",
@@ -107,29 +111,29 @@ ext_modules = [
             "nvcc": nvcc_args,
         }, # type: ignore
     )
-]
 
-# If a CUDA installation is present, add cudart to link flags so that symbols
-# like `cudaLaunchKernel` are resolved at runtime. We attempt to find CUDA
-# home either from environment or by locating `nvcc`.
-try:
-    nvcc_path = locate_nvcc()
-    inferred_cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH") or os.path.dirname(os.path.dirname(nvcc_path))
-    cuda_lib_dir = os.path.join(inferred_cuda_home, "lib64")
-    # Update the extension metadata in-place
-    for ext in ext_modules:
-        if ext.name == "tynitorch_cuda":
-            ext.libraries = ext.libraries + ["cudart"]
-            ext.library_dirs = list(ext.library_dirs) + [cuda_lib_dir]
-            ext.runtime_library_dirs = list(ext.runtime_library_dirs) + [cuda_lib_dir]
-except Exception:
-    # If we cannot find nvcc/CUDA, leave ext_modules as-is; build will fail later
-    pass
+    try:
+        inferred_cuda_home = (
+            os.environ.get("CUDA_HOME")
+            or os.environ.get("CUDA_PATH")
+            or os.path.dirname(os.path.dirname(NVCC_PATH))
+        )
+        cuda_lib_dir = os.path.join(inferred_cuda_home, "lib64")
+        cuda_extension.libraries = list(cuda_extension.libraries) + ["cudart"]
+        cuda_extension.library_dirs = list(cuda_extension.library_dirs) + [cuda_lib_dir]
+        cuda_extension.runtime_library_dirs = list(cuda_extension.runtime_library_dirs) + [cuda_lib_dir]
+    except Exception:
+        # If we cannot derive CUDA paths, continue without linker hints; build may still succeed.
+        pass
+
+    ext_modules.append(cuda_extension)
+else:
+    print("CUDA toolkit (nvcc) not found; building CPU-only package.")
 
 setup(
     name="tynitorch",
     version="0.0.0",
     packages=["tynitorch"],
     ext_modules=ext_modules,
-    cmdclass={"build_ext": BuildExtensionWithCUDA},
+    cmdclass={"build_ext": BuildExtensionWithCUDA} if CUDA_AVAILABLE else {},
 )

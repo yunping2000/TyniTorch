@@ -1,7 +1,12 @@
 # tests/test_add.py
 
-from tynitorch import Tensor
-from tynitorch import DType, DeviceType
+import pytest
+from tynitorch import (
+    Tensor,
+    DType,
+    DeviceType,
+    cuda,
+)
 
 def test_add_cpu():
     a = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
@@ -11,6 +16,7 @@ def test_add_cpu():
     assert str(c) == "[\n  [6.0, 8.0],\n  [10.0, 12.0]\n]"
 
 
+@pytest.mark.skipif(not cuda.is_available(), reason="CUDA runtime not available")
 def test_add_cuda():
     a = Tensor([[1.0]], device="cuda", dtype=DType.FLOAT32)
     b = Tensor([[1.0]], device="cuda", dtype=DType.FLOAT32)
