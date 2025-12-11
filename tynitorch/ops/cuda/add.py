@@ -14,21 +14,17 @@ def add_gpu(t1: Tensor, t2: Tensor) -> Tensor:
     except ImportError as e:
         raise ImportError("CUDA extension module (tynitorch_cuda) not found. Make sure it's built.") from e
 
-    total_elements = 1
-    for dim in t1.shape:
-        total_elements *= dim
-
-    if total_elements == 0:
+    if t1.num_elements() == 0:
         # Empty tensor
         return Tensor(data=[], device=str(t1.device), dtype=t1.dtype)
 
-    out_storage = Storage.allocate(total_elements, t1.dtype, t1.device)
+    out_storage = Storage.allocate(t1.num_elements(), t1.dtype, t1.device)
 
     tynitorch_cuda.add_f32(
         t1.storage.data_ptr,
         t2.storage.data_ptr,
         out_storage.data_ptr,
-        total_elements,
+        t1.num_elements(),
         0,  # device_index (assume device 0 for now)
     )
 

@@ -1,5 +1,5 @@
 // csrc/add_kernel.cu
-#include "add_kernel.cuh"
+#include "add.cuh"
 
 #include <cuda_runtime.h>
 #include <stdexcept>

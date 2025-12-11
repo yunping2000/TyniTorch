@@ -96,8 +96,9 @@ if CUDA_AVAILABLE:
     cuda_extension = Extension(
         name="tynitorch_cuda",
         sources=[
-            "csrc/add_kernel.cu",
-            "csrc/add_bindings.cpp",
+            "csrc/kernels/add.cu",
+            "csrc/kernels/contiguous.cu",
+            "csrc/bindings.cpp",
         ],
         include_dirs=[pybind11.get_include()],
         # Link against the CUDA runtime (cudart). We will try to determine
