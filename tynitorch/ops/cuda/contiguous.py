@@ -16,7 +16,7 @@ def contiguous_gpu(t: Tensor) -> Tensor:
     src_ptr = t.storage.data_ptr + t.offset * elem_size
     device_index = t.device.index or 0
 
-    storage = Storage.allocate(t.num_elements, t.dtype, t.device)
+    storage = Storage.allocate(t.num_elements(), t.dtype, t.device)
 
     tynitorch_cuda.contiguous_f32(
         src_ptr,

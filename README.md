@@ -13,6 +13,7 @@ python3 -m pip install -e .
 ```
 
 ## Unit test
+Note: requires `python3 -m pip install -e .` if c++/cuda code has been modified.
 ```
 pytest
 ```
