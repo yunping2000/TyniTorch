@@ -30,6 +30,58 @@ PYBIND11_MODULE(tynitorch_cuda, m) {
     );
 
     m.def(
+        "add_strided_f32",
+        [](std::uintptr_t a_ptr,
+           std::vector<std::size_t> shape,
+           std::vector<std::size_t> strides_a,
+           std::uintptr_t b_ptr,
+           std::vector<std::size_t> strides_b,
+           std::uintptr_t out_ptr,
+           int device_index) {
+            if (shape.size() != strides_a.size() || shape.size() != strides_b.size()) {
+                throw std::invalid_argument("shape and strides must have the same length");
+            }
+
+            const float* a = reinterpret_cast<const float*>(a_ptr);
+            const float* b = reinterpret_cast<const float*>(b_ptr);
+            float* out = reinterpret_cast<float*>(out_ptr);
+
+            std::size_t rank = shape.size();
+            std::size_t numel = 1;
+            for (std::size_t dim : shape) {
+                numel *= dim;
+            }
+
+            cudaSetDevice(device_index);
+
+            std::size_t* d_shape = nullptr;
+            std::size_t* d_strides_a = nullptr;
+            std::size_t* d_strides_b = nullptr;
+            cudaMalloc(&d_shape, sizeof(std::size_t) * rank);
+            cudaMalloc(&d_strides_a, sizeof(std::size_t) * rank);
+            cudaMalloc(&d_strides_b, sizeof(std::size_t) * rank);
+            cudaMemcpy(d_shape, shape.data(), sizeof(std::size_t) * rank, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_strides_a, strides_a.data(), sizeof(std::size_t) * rank, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_strides_b, strides_b.data(), sizeof(std::size_t) * rank, cudaMemcpyHostToDevice);
+
+            try {
+                add_f32_strided_launcher(
+                    a, b, out, d_shape, d_strides_a, d_strides_b, rank, numel, device_index);
+            } catch (...) {
+                cudaFree(d_shape);
+                cudaFree(d_strides_a);
+                cudaFree(d_strides_b);
+                throw;
+            }
+
+            cudaFree(d_shape);
+            cudaFree(d_strides_a);
+            cudaFree(d_strides_b);
+        },
+        "Elementwise add on float32 device buffers with arbitrary strides"
+    );
+
+    m.def(
         "contiguous_f32",
         [](std::uintptr_t src_ptr,
            std::vector<std::size_t> shape, // python list is converted to std::vector

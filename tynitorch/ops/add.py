@@ -9,5 +9,8 @@ def add(t1: Tensor, t2: Tensor) -> Tensor:
     if t1.shape != t2.shape:
         raise ValueError(f"Shape mismatch: {t1.shape} vs {t2.shape}")
 
+    if t1.dtype != t2.dtype:
+        raise ValueError(f"Dtype mismatch: {t1.dtype} vs {t2.dtype}")
+
     kernel = get_kernel("add", t1.device)
     return kernel(t1, t2)
