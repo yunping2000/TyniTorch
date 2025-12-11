@@ -10,6 +10,7 @@ class CudaError(RuntimeError):
 _CUDART: Optional[ctypes.CDLL] = None
 _CUDA_MEMCPY_HOST_TO_DEVICE = 1
 _CUDA_MEMCPY_DEVICE_TO_HOST = 2
+_CUDA_MEMCPY_DEVICE_TO_DEVICE = 3
 
 
 def _candidate_names() -> list[str]:
@@ -117,3 +118,8 @@ def cuda_memcpy_host_to_device(dst_ptr: int, src_ptr: int, num_bytes: int) -> No
 
 def cuda_memcpy_device_to_host(dst_ptr: int, src_ptr: int, num_bytes: int) -> None:
     cuda_memcpy(dst_ptr, src_ptr, num_bytes, _CUDA_MEMCPY_DEVICE_TO_HOST)
+
+
+def cuda_memcpy_device_to_device(dst_ptr: int, src_ptr: int, num_bytes: int) -> None:
+    """Copy memory directly between device buffers."""
+    cuda_memcpy(dst_ptr, src_ptr, num_bytes, _CUDA_MEMCPY_DEVICE_TO_DEVICE)
