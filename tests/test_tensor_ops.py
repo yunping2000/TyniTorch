@@ -80,6 +80,37 @@ class TestTranspose:
         
         assert t_t.shape == (2, 2, 2)
 
+    def test_transpose_3d_content(self):
+        """Transposing 3D tensor reorders elements as expected."""
+        t = Tensor(
+            [
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+            ],
+            device="cpu",
+            dtype=DType.FLOAT32,
+        )
+        t_t = t.transpose(0, 2)
+
+        assert t_t.shape == (3, 2, 2)
+        assert str(t_t) == "[\n  [\n    [1.0, 7.0],\n    [4.0, 10.0]\n  ],\n  [\n    [2.0, 8.0],\n    [5.0, 11.0]\n  ],\n  [\n    [3.0, 9.0],\n    [6.0, 12.0]\n  ]\n]"
+
+    @pytest.mark.skipif(not cuda.is_available(), reason="Cuda not available")
+    def test_transpose_3d_content_cuda(self):
+        """Transposing 3D tensor reorders elements as expected."""
+        t = Tensor(
+            [
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+            ],
+            device="cuda",
+            dtype=DType.FLOAT32,
+        )
+        t_t = t.transpose(0, 2)
+
+        assert t_t.shape == (3, 2, 2)
+        assert str(t_t) == "[\n  [\n    [1.0, 7.0],\n    [4.0, 10.0]\n  ],\n  [\n    [2.0, 8.0],\n    [5.0, 11.0]\n  ],\n  [\n    [3.0, 9.0],\n    [6.0, 12.0]\n  ]\n]"
+
     def test_transpose_same_dim(self):
         """Test transposing same dimensions should be identity."""
         t = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
@@ -134,6 +165,39 @@ class TestTranspose:
         
         # Both should reference the same storage
         assert t.storage is t_t.storage
+
+    def test_multiple_transposes_3d_content(self):
+        """Chained transposes on 3D tensor keep data consistent."""
+        t = Tensor(
+            [
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+            ],
+            device="cpu",
+            dtype=DType.FLOAT32,
+        )
+
+        t_chain = t.transpose(0, 1).transpose(1, 2)
+
+        assert t_chain.shape == (2, 3, 2)
+        assert str(t_chain) == "[\n  [\n    [1.0, 7.0],\n    [2.0, 8.0],\n    [3.0, 9.0]\n  ],\n  [\n    [4.0, 10.0],\n    [5.0, 11.0],\n    [6.0, 12.0]\n  ]\n]"
+
+    @pytest.mark.skipif(not cuda.is_available(), reason="Cuda not available")
+    def test_multiple_transposes_3d_content_cuda(self):
+        """Chained transposes on 3D tensor keep data consistent."""
+        t = Tensor(
+            [
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+            ],
+            device="cuda",
+            dtype=DType.FLOAT32,
+        )
+
+        t_chain = t.transpose(0, 1).transpose(1, 2)
+
+        assert t_chain.shape == (2, 3, 2)
+        assert str(t_chain) == "[\n  [\n    [1.0, 7.0],\n    [2.0, 8.0],\n    [3.0, 9.0]\n  ],\n  [\n    [4.0, 10.0],\n    [5.0, 11.0],\n    [6.0, 12.0]\n  ]\n]"
 
 
 class TestView:
