@@ -5,7 +5,6 @@ import ctypes
 
 from .storage import (
     Storage,
-    flatten,
     reshape_flat,
 )
 from .typing import Device, DeviceType, DType, DTYPE_SIZES, _SHAPE
@@ -59,13 +58,9 @@ def compute_default_strides(shape: Sequence[int]) -> Tuple[int, ...]:
 class Tensor:
     def __init__(self, data: Any, device: str = "cpu", dtype: Optional[DType] = None):
         self.shape = infer_shape(data) # May raise exception if data is malformed
-        
-        self.num_elements = 1
-        for dim in self.shape:
-            self.num_elements *= dim
 
         self.dtype = dtype if dtype is not None else infer_dtype(data)
-        self.storage = Storage.allocate(self.num_elements, self.dtype, device)
+        self.storage = Storage.allocate(self.num_elements(), self.dtype, device)
         self.storage.copy_from_list(data)
 
         self.strides = compute_default_strides(self.shape)
@@ -74,6 +69,11 @@ class Tensor:
         self.uuid = uuid4()
         self.grad = None
 
+    def num_elements(self) -> int:
+        total = 1
+        for dim in self.shape:
+            total *= dim
+        return total
 
     @classmethod
     def from_storage(
@@ -81,7 +81,7 @@ class Tensor:
         storage: Storage,
         shape: Sequence[int],
         strides: Optional[Sequence[int]] = None,
-        offset: int = 0,
+        offset: Optional[int] = None,
     ) -> "Tensor":
         """Create a Tensor that wraps an existing Storage."""
         shape_tuple = tuple(shape)
@@ -93,7 +93,7 @@ class Tensor:
         tensor.storage = storage
         tensor.shape = shape_tuple
         tensor.strides = strides_tuple
-        tensor.offset = offset
+        tensor.offset = 0 if offset is None else offset
         tensor.device = storage.device
         tensor.dtype = storage.dtype
         tensor.uuid = uuid4()
@@ -114,7 +114,6 @@ class Tensor:
         new_shape[dim0], new_shape[dim1] = new_shape[dim1], new_shape[dim0]
         new_strides[dim0], new_strides[dim1] = new_strides[dim1], new_strides[dim0]
 
-        self.storage.ref_count += 1  # Increase ref count since new tensor shares the same storage
         tensor = Tensor.from_storage(
             storage=self.storage,
             shape=new_shape,
@@ -143,7 +142,6 @@ class Tensor:
         if total_elements_old != total_elements_new:
             raise ValueError(f"Cannot view tensor of shape {self.shape} as shape {shape} due to mismatch in number of elements.")
 
-        self.storage.ref_count += 1  # Increase ref count since new tensor shares the same storage
         tensor = Tensor.from_storage(
             storage=self.storage,
             shape=shape,
@@ -160,13 +158,8 @@ class Tensor:
         if self.is_contiguous():
             return self
 
-        # For cpu buffers, we want to manipulate the cpu buffer directly
-        # We don't want to create temporary lists.
-
-        # For cuda tensors, we don't want gpu->host->gpu copying.
-        # We want to directly create a copy on gpu.
-
-        raise NotImplementedError("contiguous() is not yet implemented.")
+        from . import ops
+        return ops.contiguous(self)
 
     def is_contiguous(self) -> bool:
         expected_stride = 1

@@ -125,7 +125,6 @@ class TestTranspose:
         
         # Both should reference the same storage
         assert t.storage is t_t.storage
-        assert t.storage.ref_count == 2  # One for original, one for transposed
 
     @pytest.mark.skipif(not cuda.is_available(), reason="Cuda not available")
     def test_transpose_shares_storage_cuda(self):
@@ -135,7 +134,6 @@ class TestTranspose:
         
         # Both should reference the same storage
         assert t.storage is t_t.storage
-        assert t.storage.ref_count == 2  # One for original, one for transposed
 
 
 class TestView:
@@ -248,7 +246,6 @@ class TestView:
         
         # Both should reference the same storage
         assert t.storage is t_2d.storage
-        assert t.storage.ref_count == 2
 
     @pytest.mark.skipif(not cuda.is_available(), reason="Cuda not available")
     def test_view_shares_storage_cuda(self):
@@ -258,7 +255,6 @@ class TestView:
         
         # Both should reference the same storage
         assert t.storage is t_2d.storage
-        assert t.storage.ref_count == 2
 
     def test_view_with_single_dimension(self):
         """Test view with single-element dimensions."""
@@ -542,34 +538,3 @@ class TestIntegration:
         t = t.transpose(0, 2)
         
         assert t.shape == (2, 2, 2)
-
-    def test_storage_ref_count_with_operations(self):
-        """Test that ref_count is properly maintained through operations."""
-        t1 = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cpu", dtype=DType.FLOAT32)
-        assert t1.storage.ref_count == 1
-        
-        t2 = t1.transpose(0, 1)
-        assert t1.storage.ref_count == 2
-        
-        t3 = t1.view((4,))
-        assert t1.storage.ref_count == 3
-        
-        # Delete t2, ref_count should decrease
-        del t2
-        assert t1.storage.ref_count == 2
-
-    @pytest.mark.skipif(not cuda.is_available(), reason="Cuda not available")
-    def test_storage_ref_count_with_operations_cuda(self):
-        """Test that ref_count is properly maintained through operations."""
-        t1 = Tensor([[1.0, 2.0], [3.0, 4.0]], device="cuda", dtype=DType.FLOAT32)
-        assert t1.storage.ref_count == 1
-        
-        t2 = t1.transpose(0, 1)
-        assert t1.storage.ref_count == 2
-        
-        t3 = t1.view((4,))
-        assert t1.storage.ref_count == 3
-        
-        # Delete t2, ref_count should decrease
-        del t2
-        assert t1.storage.ref_count == 2

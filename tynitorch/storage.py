@@ -21,7 +21,6 @@ class Storage:
     num_bytes: int
     dtype: DType
     device: Device
-    ref_count: int = 1
     # Keep a reference to the CPU-side buffer so it's not freed by GC.
     _cpu_buffer: Optional[bytearray] = None
 
@@ -64,31 +63,26 @@ class Storage:
     def copy_from_list(self, data: List[Any]) -> None:
         """Copy a flat sequence of Python values into this storage."""
         flat = flatten(data)
+        self.copy_from_iterable(flat)
 
-        # Check if flat size <= storage capacity
+    def copy_from_iterable(self, values: Iterable[Any]) -> None:
+        """Copy values from any iterable/generator into this storage."""
         elem_size = DTYPE_SIZES[self.dtype]
-        if len(flat) * elem_size > self.num_bytes:
-            raise ValueError("Flat data exceeds storage capacity")
+        max_elems = self.num_bytes // elem_size
 
         if self.device.type == DeviceType.CPU:
-            fmt = _STRUCT_FORMATS[self.dtype]
-            elem_size = DTYPE_SIZES[self.dtype]
-            # If we have a retained CPU bytearray, write into it directly
-            if self._cpu_buffer is not None:
-                for i, value in enumerate(flat):
-                    struct.pack_into(
-                        fmt,
-                        self._cpu_buffer,
-                        i * elem_size,
-                        value,
-                    )
-            else:
-                # Fallback: write into raw address using ctypes.memmove
-                # TODO: Probably not needed
-                for i, value in enumerate(flat):
-                    offset_bytes = i * elem_size
-                    packed = struct.pack(fmt, value)
-                    ctypes.memmove(self.data_ptr + offset_bytes, packed, elem_size)
+            if self._cpu_buffer is None:
+                raise RuntimeError("Internal error: should have ByteArray for CPU storage")
+
+            for i, value in enumerate(values):
+                if i >= max_elems:
+                    raise ValueError("Iterable exceeds storage capacity")
+                struct.pack_into(
+                    _STRUCT_FORMATS[self.dtype],
+                    self._cpu_buffer,
+                    i * elem_size,
+                    value,
+                )
         elif self.device.type == DeviceType.CUDA:
             try:
                 from .cuda import allocator
@@ -96,11 +90,13 @@ class Storage:
                 raise NotImplementedError("CUDA runtime is not available.") from exc
 
             host_buffer = bytearray(self.num_bytes)
-            for i, value in enumerate(flat):
+            for i, value in enumerate(values):
+                if i >= max_elems:
+                    raise ValueError("Iterable exceeds storage capacity")
                 struct.pack_into(
                     _STRUCT_FORMATS[self.dtype],
                     host_buffer,
-                    i * DTYPE_SIZES[self.dtype],
+                    i * elem_size,
                     value
                 )
             if self.num_bytes:
@@ -136,6 +132,7 @@ class Storage:
             (value,) = struct.unpack_from(fmt, buffer, byte_offset)
             flat.append(value)
         return flat
+
 
 def flatten(nested: Any) -> List[Any]:
     """Flatten nested lists/tuples into a flat list."""
@@ -183,10 +180,6 @@ def _get_buffer_pointer(buffer: bytearray) -> int:
     return ctypes.addressof(c_buf)
 
 
-def _allocate_buffer_cpu(num_bytes: int) -> int: # Returns a raw pointer
-    return _get_buffer_pointer(bytearray(num_bytes))
-
-
 def _allocate_buffer_cuda(num_bytes: int) -> int: # Returns a raw pointer
     try:
         from .cuda import allocator
@@ -218,8 +211,3 @@ def _iter_indices(shape: Sequence[int]) -> Iterable[Tuple[int, ...]]:
         for i in range(dims[0]):
             yield from _rec(prefix + (i,), dims[1:])
     yield from _rec((), shape)
-
-
-# Note: allocate_storage, copy_flat_to_storage, and read_flat are now
-# implemented as `Storage.allocate`, `Storage.copy_from_flat`, and
-# `Storage.read_flat` respectively.
