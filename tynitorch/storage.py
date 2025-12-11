@@ -25,19 +25,14 @@ class Storage:
     # Keep a reference to the CPU-side buffer so it's not freed by GC.
     _cpu_buffer: Optional[bytearray] = None
 
-    def free(self) -> None:
-        """Free Storage resources. CPU memory is auto-freed; CUDA memory must be explicitly freed."""
-        if self.device.type == DeviceType.CPU:
-            # CPU storage is automatically freed after GC
-            return
-
-        # Free CUDA memory
-        try:
-            from .cuda import allocator
-            if self.data_ptr and self.num_bytes:
-                allocator.cuda_free(self.data_ptr)
-        except ImportError:
-            pass
+    def __del__(self):
+        if self.device.type == DeviceType.CUDA:
+            try:
+                from .cuda import allocator
+                if self.data_ptr and self.num_bytes:
+                    allocator.cuda_free(self.data_ptr)
+            except ImportError:
+                pass
 
     @classmethod
     def allocate(cls, length: int, dtype: DType, device: str | Device) -> "Storage":

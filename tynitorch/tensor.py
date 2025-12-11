@@ -183,14 +183,6 @@ class Tensor:
         return ops.add(self, other)
 
 
-    def __del__(self):
-        """Decrement ref_count when tensor is garbage collected."""
-        if hasattr(self, 'storage') and self.storage is not None:
-            self.storage.ref_count -= 1
-            if self.storage.ref_count == 0:
-                self.storage.free()
-
-
     def __repr__(self):
         flat = self.storage.read_flat(self.shape, self.strides, self.offset)
         nested = reshape_flat(flat, self.shape)
