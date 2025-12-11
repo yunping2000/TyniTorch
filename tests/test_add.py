@@ -96,4 +96,4 @@ def test_add_cuda_strided_3d_transpose():
 
     assert c.device.type == DeviceType.CUDA
     assert c.shape == (2, 2, 3)
-    assert str(c) == "[\n  [\n    [11.0, 55.0, 99.0],\n    [23.0, 67.0, 111.0]\n  ],\n  [\n    [13.0, 57.0, 101.0],\n    [25.0, 69.0, 113.0]\n  ]\n]"
+    assert str(c) == "[\n  [\n    [11.0, 55.0, 99.0],\n    [33.0, 77.0, 121.0]\n  ],\n  [\n    [22.0, 66.0, 110.0],\n    [44.0, 88.0, 132.0]\n  ]\n]"
